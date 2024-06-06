@@ -156,9 +156,9 @@ void wifi_connection()
 
 	esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_configuration);
-    // 3 - Wi-Fi Start Phase
+ 
     esp_wifi_start();
-    // 4- Wi-Fi Connect Phase
+
     esp_wifi_connect();
 }
 
@@ -168,7 +168,7 @@ esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
     switch (evt->event_id)
     {
     case HTTP_EVENT_ON_DATA:
-        // printf("HTTP_EVENT_ON_DATA: %.*s\n", evt->data_len, (char *)evt->data);
+
         root = cJSON_Parse((char *)evt->data);
             
         if(root == NULL){
@@ -199,7 +199,6 @@ esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
         }
         break;
     default:
-			// printf("%d \n ", evt->event_id);
         break;
     }
     cJSON_Delete(root);
