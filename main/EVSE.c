@@ -14,7 +14,7 @@
 #include "cJSON.h"
 #include "driver/gpio.h"
 
-#define BUTTON_PIN  GPIO_NUM_0   // GPIO input cho nút bấm
+#define BUTTON_PIN_1  GPIO_NUM_0   // GPIO input cho nút bấm
 #define LED_PIN     GPIO_NUM_2   // GPIO output cho LED màu xanh
 #define RELAY_PIN   GPIO_NUM_14   // GPIO output cho relay
 
