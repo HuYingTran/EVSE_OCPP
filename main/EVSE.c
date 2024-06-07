@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 
+
 #define BUTTON1_PIN     GPIO_NUM_0   // GPIO input cho nút bấm
 #define BUTTON2_PIN     GPIO_NUM_26
 #define LED1_PIN        GPIO_NUM_2 
