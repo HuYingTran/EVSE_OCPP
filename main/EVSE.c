@@ -1,8 +1,15 @@
-// HTTP Client - FreeRTOS ESP IDF - GET
-
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
+#include "freertos/event_groups.h"
+#include "esp_wifi.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_netif.h"
+#include "esp_http_client.h"
+#include "my_data.h"
+#include "cJSON.h"
 #include "driver/gpio.h"
 
 #define BUTTON1_PIN     GPIO_NUM_0   // GPIO input cho nút bấm
@@ -19,6 +26,9 @@
 
 #define BLINK_DELAY     500  // Độ trễ giữa các lần nhấp nháy LED (ms)
 
+// #define FIREBASE_URL "http://evse-abc20-default-rtdb.firebaseio.com/mode.json" // Endpoint cho node duy nhất
+// #define FIREBASE_TOKEN ""  // Token xác thực (nếu cần)
+
 typedef enum {
     STATE_READY,
     STATE_CONNECTED,
@@ -27,6 +37,86 @@ typedef enum {
 } state_t;
 
 state_t current_state = STATE_READY;
+static uint8_t mode = 0;
+
+static void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
+{
+    switch (event_id)
+    {
+    case WIFI_EVENT_STA_START:
+        printf("WiFi connecting ... \n");
+        break;
+    case WIFI_EVENT_STA_CONNECTED:
+        printf("WiFi connected ... \n");
+        break;
+    case WIFI_EVENT_STA_DISCONNECTED:
+        printf("WiFi lost connection ... \n");
+        break;
+    case IP_EVENT_STA_GOT_IP:
+        printf("WiFi got IP ... \n\n");
+        break;
+    default:
+        break;
+    }
+}
+
+void wifi_connection()
+{
+    // 1 - Wi-Fi/LwIP Init Phase
+    esp_netif_init();                    // TCP/IP initiation 					s1.1
+    esp_event_loop_create_default();     // event loop 			                s1.2
+    esp_netif_create_default_wifi_sta(); // WiFi station 	                    s1.3
+    wifi_init_config_t wifi_initiation = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&wifi_initiation); // 					                    s1.4
+    // 2 - Wi-Fi Configuration Phase
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL);
+    wifi_config_t wifi_configuration = {
+        .sta = {
+            .ssid = SSID,
+            .password = PASS}};
+    esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_configuration);
+    // 3 - Wi-Fi Start Phase
+    esp_wifi_start();
+    // 4- Wi-Fi Connect Phase
+    esp_wifi_connect();
+}
+
+esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
+{
+    if (evt->event_id == HTTP_EVENT_ON_DATA)
+    {
+        printf("HTTP_EVENT_ON_DATA: %.*s\n", evt->data_len, (char *)evt->data);
+        // Phân tích dữ liệu JSON nếu cần
+        cJSON *root = cJSON_Parse(evt->data);
+        if (root != NULL)
+        {
+            // Ví dụ: Lấy một trường cụ thể từ JSON
+            cJSON *field = cJSON_GetObjectItem(root, "field1");
+            if (cJSON_IsString(field))
+            {
+                mode = strcmp(field->valuestring, "5") == 0 ? 1 : 0;
+            }
+            cJSON_Delete(root);
+        }
+    }
+    return ESP_OK;
+}
+
+static void rest_get()
+{
+
+    esp_http_client_config_t config_get = {
+        .url = "http://evse-abc20-default-rtdb.firebaseio.com/.json",
+        .method = HTTP_METHOD_GET,
+        .cert_pem = NULL,
+        .event_handler = client_event_get_handler};
+        
+    esp_http_client_handle_t client = esp_http_client_init(&config_get);
+    esp_http_client_perform(client);
+    esp_http_client_cleanup(client);
+}
+
 
 void button_task(void *pvParameter) {
     gpio_pad_select_gpio(BUTTON1_PIN);
@@ -88,7 +178,6 @@ void led_task(void *pvParameter) {
             case STATE_CHARGING:
                 gpio_set_level(LED1_PIN, LED_ON);
                 gpio_set_level(LED2_PIN, LED_ON);
-                printf("led 2: %d \n", LED2_PIN);
                 break;
             case STATE_ERROR:
                 // Nhấp nháy LED để biểu thị lỗi
@@ -130,4 +219,14 @@ void app_main(void) {
     xTaskCreate(button_task, "button_task", 2048, NULL, 10, NULL);
     xTaskCreate(led_task, "led_task", 2048, NULL, 10, NULL);
     xTaskCreate(relay_task, "relay_task", 2048, NULL, 10, NULL);
+    printf("WIFI was initiated ...........\n\n");
+    nvs_flash_init();
+    wifi_connection();
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+    while (1) {
+        rest_get();
+        printf("mode: %d", mode);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
 }
