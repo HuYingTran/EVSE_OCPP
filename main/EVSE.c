@@ -187,7 +187,7 @@ esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
             if (root != NULL){
                 cJSON *mode_item = cJSON_GetObjectItem(root, "Mode");
                 if (cJSON_IsNumber(mode_item)) {
-                    if (mode_item->valueint == 1) {
+                    if (mode_item->valueint == 5) {
                         mode = 1;
                     }
                     else {
