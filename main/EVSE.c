@@ -26,8 +26,6 @@
 
 #define BLINK_DELAY     500  // Độ trễ giữa các lần nhấp nháy LED (ms)
 
-// #define FIREBASE_URL "http://evse-abc20-default-rtdb.firebaseio.com/mode.json" // Endpoint cho node duy nhất
-// #define FIREBASE_TOKEN ""  // Token xác thực (nếu cần)
 
 typedef enum {
     STATE_READY,
@@ -38,85 +36,6 @@ typedef enum {
 
 state_t current_state = STATE_READY;
 static uint8_t mode = 0;
-
-static void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
-{
-    switch (event_id)
-    {
-    case WIFI_EVENT_STA_START:
-        printf("WiFi connecting ... \n");
-        break;
-    case WIFI_EVENT_STA_CONNECTED:
-        printf("WiFi connected ... \n");
-        break;
-    case WIFI_EVENT_STA_DISCONNECTED:
-        printf("WiFi lost connection ... \n");
-        break;
-    case IP_EVENT_STA_GOT_IP:
-        printf("WiFi got IP ... \n\n");
-        break;
-    default:
-        break;
-    }
-}
-
-void wifi_connection()
-{
-    // 1 - Wi-Fi/LwIP Init Phase
-    esp_netif_init();                    // TCP/IP initiation 					s1.1
-    esp_event_loop_create_default();     // event loop 			                s1.2
-    esp_netif_create_default_wifi_sta(); // WiFi station 	                    s1.3
-    wifi_init_config_t wifi_initiation = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&wifi_initiation); // 					                    s1.4
-    // 2 - Wi-Fi Configuration Phase
-    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL);
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL);
-    wifi_config_t wifi_configuration = {
-        .sta = {
-            .ssid = SSID,
-            .password = PASS}};
-    esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_configuration);
-    // 3 - Wi-Fi Start Phase
-    esp_wifi_start();
-    // 4- Wi-Fi Connect Phase
-    esp_wifi_connect();
-}
-
-esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
-{
-    if (evt->event_id == HTTP_EVENT_ON_DATA)
-    {
-        printf("HTTP_EVENT_ON_DATA: %.*s\n", evt->data_len, (char *)evt->data);
-        // Phân tích dữ liệu JSON nếu cần
-        cJSON *root = cJSON_Parse(evt->data);
-        if (root != NULL)
-        {
-            // Ví dụ: Lấy một trường cụ thể từ JSON
-            cJSON *field = cJSON_GetObjectItem(root, "field1");
-            if (cJSON_IsString(field))
-            {
-                mode = strcmp(field->valuestring, "5") == 0 ? 1 : 0;
-            }
-            cJSON_Delete(root);
-        }
-    }
-    return ESP_OK;
-}
-
-static void rest_get()
-{
-
-    esp_http_client_config_t config_get = {
-        .url = "http://evse-abc20-default-rtdb.firebaseio.com/.json",
-        .method = HTTP_METHOD_GET,
-        .cert_pem = NULL,
-        .event_handler = client_event_get_handler};
-        
-    esp_http_client_handle_t client = esp_http_client_init(&config_get);
-    esp_http_client_perform(client);
-    esp_http_client_cleanup(client);
-}
-
 
 void button_task(void *pvParameter) {
     gpio_pad_select_gpio(BUTTON1_PIN);
@@ -140,7 +59,9 @@ void button_task(void *pvParameter) {
             } 
             // Nếu nút 2 được nhấn
             if (button2_state == BUTTON_PRESSED) {
+                if (current_state == STATE_CONNECTED && mode == 1){
                 current_state = STATE_CHARGING;
+                }
             }
             else {
                 current_state = STATE_CONNECTED;
@@ -214,19 +135,129 @@ void relay_task(void *pvParameter) {
     }
 }
 
+static void wifi_event_handler(void *event_handler_arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
+{
+    switch (event_id)
+    {
+    case WIFI_EVENT_STA_START:
+        printf("WiFi connecting ... \n");
+        break;
+    case WIFI_EVENT_STA_CONNECTED:
+        printf("WiFi connected ... \n");
+        break;
+    case WIFI_EVENT_STA_DISCONNECTED:
+        printf("WiFi lost connection ... \n");
+        break;
+    case IP_EVENT_STA_GOT_IP:
+        printf("WiFi got IP ... \n\n");
+        break;
+    default:
+        break;
+    }
+}
+
+void wifi_connection()
+{
+    // 1 - Wi-Fi/LwIP Init Phase
+    esp_netif_init();                    // TCP/IP initiation 					s1.1
+    esp_event_loop_create_default();     // event loop 			                s1.2
+    esp_netif_create_default_wifi_sta(); // WiFi station 	                    s1.3
+    wifi_init_config_t wifi_initiation = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&wifi_initiation); // 					                    s1.4
+    // 2 - Wi-Fi Configuration Phase
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL);
+    wifi_config_t wifi_configuration = {
+        .sta = {
+            .ssid = SSID,
+            .password = PASS}};
+    esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_configuration);
+    // 3 - Wi-Fi Start Phase
+    esp_wifi_start();
+    // 4- Wi-Fi Connect Phase
+    esp_wifi_connect();
+}
+
+esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
+{
+    switch (evt->event_id){
+        case HTTP_EVENT_ON_DATA:
+        if (evt->data_len >0) {
+            cJSON *root = cJSON_Parse((char *)evt->data);
+            if (root != NULL){
+                cJSON *mode_item = cJSON_GetObjectItem(root, "Mode");
+                if (cJSON_IsNumber(mode_item)) {
+                    if (mode_item->valueint == 1) {
+                        mode = 1;
+                    }
+                    else {
+                        mode = 0;
+                    }
+                    printf("mode: %d\n", mode);
+                }
+                cJSON_Delete(root);
+            }
+            else {
+                printf("Failed to parse JSON\n");
+            }
+        }
+        else {
+            printf("data_len = 0");
+        }
+        break;
+    default:
+        break;
+    }
+    return ESP_OK;
+}
+        // printf("HTTP_EVENT_ON_DATA: %.*s\n", evt->data_len, (char *)evt->data);
+        // root = cJSON_Parse(evt->data);
+        // if (root != NULL)
+        // {
+        //     cJSON *field = cJSON_GetObjectItem(root, "mode");
+        //     if (cJSON_IsString(field))
+        //     {
+        //         mode = strcmp(field->valuestring, "5") == 0 ? 1 : 0;
+        //         printf("mode: %d", mode);
+        //     }
+        //     cJSON_Delete(root);
+
+
+static void rest_get()
+{
+
+    esp_http_client_config_t config_get = {
+        .url = "https://evse-abc20-default-rtdb.firebaseio.com/.json",
+        .method = HTTP_METHOD_GET,
+        .cert_pem = NULL,
+        .event_handler = client_event_get_handler,
+        .skip_cert_common_name_check = true};
+        
+    esp_http_client_handle_t client = esp_http_client_init(&config_get);
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        printf("HTTP GET status = %d, content_length = %d\n", esp_http_client_get_status_code(client), esp_http_client_get_content_length(client));
+    }
+    else {
+        printf("HTTP GET request failed: %s\n", esp_err_to_name(err));
+        printf("HTTP GET request failed: %d\n", err);
+    }
+    esp_http_client_cleanup(client);
+}
+
 void app_main(void) {
+
+    printf("WIFI was initiated ...........\n\n");
+    nvs_flash_init();
+    wifi_connection();
 
     xTaskCreate(button_task, "button_task", 2048, NULL, 10, NULL);
     xTaskCreate(led_task, "led_task", 2048, NULL, 10, NULL);
     xTaskCreate(relay_task, "relay_task", 2048, NULL, 10, NULL);
-    printf("WIFI was initiated ...........\n\n");
-    nvs_flash_init();
-    wifi_connection();
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     while (1) {
         rest_get();
-        printf("mode: %d", mode);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
