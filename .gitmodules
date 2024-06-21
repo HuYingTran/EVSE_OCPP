@@ -1,0 +1,18 @@
+[submodule "components/MicroOCPP"]
+	path = components/MicroOCPP
+	url = https://github.com/matth-x/MicroOcpp
+[submodule "components/MicroOCPPMongoose"]
+	path = components/MicroOCPPMongoose
+	url = https://github.com/matth-x/MicroOcppMongoose
+[submodule "components/mongoose"]
+	path = components/mongoose
+	url = https://github.com/cesanta/mongoose-esp-idf
+[submodule "components/ArduinoJson"]
+	path = components/ArduinoJson
+	url = https://github.com/bblanchon/ArduinoJson
+[submodule "components/MicroOcppMongoose"]
+	path = components/MicroOcppMongoose
+	url = https://github.com/matth-x/MicroOcppMongoose
+[submodule "components/MicroOcpp"]
+	path = components/MicroOcpp
+	url = https://github.com/matth-x/MicroOcpp
