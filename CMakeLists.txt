@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(OCPP_ESP-IDF)
+project(EVSE_OCPP)
 
 idf_build_set_property(COMPILE_OPTIONS -DMO_TRAFFIC_OUT APPEND)
 idf_build_set_property(COMPILE_OPTIONS -DMO_FILENAME_PREFIX="/mo_store/" APPEND)
