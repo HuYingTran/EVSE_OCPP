@@ -34,6 +34,7 @@
 
 #define RELAY_PIN       GPIO_NUM_14
 
+struct mg_mgr mgr;        // Event manager
 static uint8_t mode = 0;
 SemaphoreHandle_t xSemaphoreHTTP;
 // SemaphoreHandle_t xSemaphoreOCPP;
@@ -94,7 +95,24 @@ static void rest_get_task(void *pvParameter)
             xSemaphoreGive(xSemaphoreHTTP);
             printf("XSEMAPHOREHTTP RELEASED AFTER HTTP REQUEST\n");
         }
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+    }
+}
+
+void ocpp_task(void *pvParameter)
+{
+    while(1) {
+        printf("\nAttempting to take xSemaphoreOCPP loop\n");
+        if (xSemaphoreTake(xSemaphoreHTTP, portMAX_DELAY)) {
+            printf("xSemaphoreOCPP taken for OCPP loop\n");
+            mg_mgr_poll(&mgr, 10);
+            ocpp_loop();
+            xSemaphoreGive(xSemaphoreHTTP);
+            printf("xSemaphoreOCPP released after OCPP loop\n");
+        } else {
+            printf("Failed to take OCPP semaphore");
+        }
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -115,7 +133,6 @@ void app_main(void)
     wifi_init_sta();
 
     /* Initialize Mongoose (necessary for MicroOcpp)*/
-    struct mg_mgr mgr;        // Event manager
     mg_mgr_init(&mgr);        // Initialise event manager
     mg_log_set(MG_LL_DEBUG);  // Set log level
 
@@ -135,25 +152,6 @@ void app_main(void)
     xTaskCreate(button_task, "button_task", 4096, NULL , 10, &ISR);
     xTaskCreate(relay_task, "relay_task", 4096, NULL , 10, NULL);
     xTaskCreate(rest_get_task, "rest_get_task", 4096, NULL, 10, NULL);
-
-    /* Enter infinite loop */
-    while (1) {
-        printf("\nAttempting to take xSemaphoreOCPP loop\n");
-        if (xSemaphoreTake(xSemaphoreHTTP, portMAX_DELAY)) {
-            printf("xSemaphoreOCPP taken for OCPP loop\n");
-            mg_mgr_poll(&mgr, 10);
-            ocpp_loop();
-            xSemaphoreGive(xSemaphoreHTTP);
-            printf("xSemaphoreOCPP released after OCPP loop\n");
-        } else {
-            printf("Failed to take OCPP semaphore");
-        }
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-    }
-    
-    /* Deallocate ressources */
-    ocpp_deinitialize();
-    ocpp_deinitConnection(osock);
-    mg_mgr_free(&mgr);
+    xTaskCreate(ocpp_task, "ocpp_task", 4096, NULL, 10, NULL);
     return;
 }
