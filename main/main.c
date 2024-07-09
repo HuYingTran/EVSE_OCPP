@@ -37,7 +37,8 @@
 struct mg_mgr mgr;        // Event manager
 static uint8_t mode = 0;
 SemaphoreHandle_t xSemaphoreHTTP;
-// SemaphoreHandle_t xSemaphoreOCPP;
+TickType_t LastWakeTime = 0;
+TaskHandle_t get_task_handler = NULL;
 
 void relay_task(void *pvParameter) {
     gpio_pad_select_gpio(RELAY_PIN);
@@ -45,7 +46,7 @@ void relay_task(void *pvParameter) {
 
     while(1) {
         gpio_set_level(RELAY_PIN, mode == 1 ? 1 : 0);
-        vTaskDelay(100 / portTICK_PERIOD_MS); // Đợi 100ms trước khi kiểm tra lại trạng thái
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
 esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
@@ -76,43 +77,51 @@ esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
 
 static void rest_get_task(void *pvParameter)
 {
-    while(1) {
-        printf("\nATTEMPTING TO TAKE XSEMAPHOREHTTP FOR HTTP REQUEST\n");
-        if (xSemaphoreTake(xSemaphoreHTTP, portMAX_DELAY)) {
-            printf("XSEMAPHOREHTTP TAKEN FOR HTTP REQUEST\n");
-            esp_http_client_config_t config_get = {
-                .url = "https://evse-b1229-default-rtdb.firebaseio.com/.json",
-                .method = HTTP_METHOD_GET,
-                .cert_pem = NULL,
-                .event_handler = client_event_get_handler,
-                .skip_cert_common_name_check = true,
-                .timeout_ms = 1000
-            } ;
-            esp_http_client_handle_t client = esp_http_client_init(&config_get);
-            esp_http_client_perform(client);
-            esp_http_client_cleanup(client);
+    
+    // printf("\nATTEMPTING TO TAKE XSEMAPHOREHTTP FOR HTTP REQUEST\n");
+    if (xSemaphoreTake(xSemaphoreHTTP, portMAX_DELAY)) {
+        // printf("XSEMAPHOREHTTP TAKEN FOR HTTP REQUEST\n");
+        esp_http_client_config_t config_get = {
+            .url = "https://evse-b1229-default-rtdb.firebaseio.com/.json",
+            .method = HTTP_METHOD_GET,
+            .cert_pem = NULL,
+            .event_handler = client_event_get_handler,
+            .skip_cert_common_name_check = true,
+            .timeout_ms = 1000
+        } ;
+        esp_http_client_handle_t client = esp_http_client_init(&config_get);
+        esp_http_client_perform(client);
+        esp_http_client_cleanup(client);
 
-            xSemaphoreGive(xSemaphoreHTTP);
-            printf("XSEMAPHOREHTTP RELEASED AFTER HTTP REQUEST\n");
+        xSemaphoreGive(xSemaphoreHTTP);
+        // printf("XSEMAPHOREHTTP RELEASED AFTER HTTP REQUEST\n");
+    }
+    get_task_handler = NULL;
+    vTaskDelete(NULL);
+}
+
+void http_get_loop(void *pvParameter)
+{
+    while(1) {
+        if (xTaskGetTickCount() - LastWakeTime >= pdMS_TO_TICKS(2000) && get_task_handler == NULL) {
+            xTaskCreate(rest_get_task, "rest_get_task", 4096, NULL, 10, &get_task_handler);
+            LastWakeTime = xTaskGetTickCount();
         }
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
 
 void ocpp_task(void *pvParameter)
 {
     while(1) {
-        printf("\nAttempting to take xSemaphoreOCPP loop\n");
+        // printf("\nAttempting to take xSemaphoreOCPP loop\n");
         if (xSemaphoreTake(xSemaphoreHTTP, portMAX_DELAY)) {
-            printf("xSemaphoreOCPP taken for OCPP loop\n");
+            // printf("xSemaphoreOCPP taken for OCPP loop\n");
             mg_mgr_poll(&mgr, 10);
             ocpp_loop();
             xSemaphoreGive(xSemaphoreHTTP);
-            printf("xSemaphoreOCPP released after OCPP loop\n");
-        } else {
-            printf("Failed to take OCPP semaphore");
+            // printf("xSemaphoreOCPP released after OCPP loop\n");
         }
-        vTaskDelay(2000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -127,7 +136,6 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     xSemaphoreHTTP = xSemaphoreCreateMutex();
-    // xSemaphoreOCPP = xSemaphoreCreateMutex();
     
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
@@ -151,7 +159,7 @@ void app_main(void)
     //Create and start stats task
     xTaskCreate(button_task, "button_task", 4096, NULL , 10, &ISR);
     xTaskCreate(relay_task, "relay_task", 4096, NULL , 10, NULL);
-    xTaskCreate(rest_get_task, "rest_get_task", 4096, NULL, 10, NULL);
+    xTaskCreate(http_get_loop, "http_get_loop", 4096, NULL, 10, NULL);
     xTaskCreate(ocpp_task, "ocpp_task", 4096, NULL, 10, NULL);
     return;
 }

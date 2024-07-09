@@ -2,6 +2,7 @@
     "files.associations": {
         "esp_wifi.h": "c",
         "esp_http_client.h": "c",
-        "mongoose.h": "c"
+        "mongoose.h": "c",
+        "esp_attr.h": "c"
     }
 }
