@@ -15,6 +15,8 @@
 #include <driver/gpio.h>
 #include "WIFI.h"
 #include "EVConnection.h"
+#include "esp_http_client.h"
+#include "cJSON.h"
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -30,6 +32,99 @@
 #define EXAMPLE_MO_CHARGEBOXID     CONFIG_MO_CHARGEBOXID
 #define EXAMPLE_MO_AUTHORIZATIONKEY CONFIG_MO_AUTHORIZATIONKEY
 
+#define RELAY_PIN       GPIO_NUM_14
+
+struct mg_mgr mgr;        // Event manager
+static uint8_t mode = 0;
+SemaphoreHandle_t xSemaphoreHTTP;
+TickType_t LastWakeTime = 0;
+TaskHandle_t get_task_handler = NULL;
+
+void relay_task(void *pvParameter) {
+    gpio_pad_select_gpio(RELAY_PIN);
+    gpio_set_direction(RELAY_PIN, GPIO_MODE_OUTPUT);
+
+    while(1) {
+        gpio_set_level(RELAY_PIN, mode == 1 ? 1 : 0);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+}
+esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
+{
+    switch (evt->event_id){
+        case HTTP_EVENT_ON_DATA:
+        if (evt->data_len >0) {
+            cJSON *root = cJSON_Parse((char *)evt->data);
+            if (root != NULL){
+                cJSON *mode_item = cJSON_GetObjectItem(root, "Mode");
+                if (cJSON_IsNumber(mode_item)) {
+                    mode = mode_item->valueint;
+                    printf("Mode: %d\n", mode);
+                }
+                cJSON_Delete(root);
+            } else {
+                printf("Failed to parse JSON\n");
+            }
+        } else {
+            printf("data_len = 0");
+        }
+        break;
+    default:
+        break;
+    }
+    return ESP_OK;
+}
+
+static void rest_get_task(void *pvParameter)
+{
+    
+    // printf("\nATTEMPTING TO TAKE XSEMAPHOREHTTP FOR HTTP REQUEST\n");
+    if (xSemaphoreTake(xSemaphoreHTTP, portMAX_DELAY)) {
+        // printf("XSEMAPHOREHTTP TAKEN FOR HTTP REQUEST\n");
+        esp_http_client_config_t config_get = {
+            .url = "https://evse-b1229-default-rtdb.firebaseio.com/.json",
+            .method = HTTP_METHOD_GET,
+            .cert_pem = NULL,
+            .event_handler = client_event_get_handler,
+            .skip_cert_common_name_check = true,
+            .timeout_ms = 1000
+        } ;
+        esp_http_client_handle_t client = esp_http_client_init(&config_get);
+        esp_http_client_perform(client);
+        esp_http_client_cleanup(client);
+
+        xSemaphoreGive(xSemaphoreHTTP);
+        // printf("XSEMAPHOREHTTP RELEASED AFTER HTTP REQUEST\n");
+    }
+    get_task_handler = NULL;
+    vTaskDelete(NULL);
+}
+
+void http_get_loop(void *pvParameter)
+{
+    while(1) {
+        if (xTaskGetTickCount() - LastWakeTime >= pdMS_TO_TICKS(2000) && get_task_handler == NULL) {
+            xTaskCreate(rest_get_task, "rest_get_task", 4096, NULL, 10, &get_task_handler);
+            LastWakeTime = xTaskGetTickCount();
+        }
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+}
+
+void ocpp_task(void *pvParameter)
+{
+    while(1) {
+        // printf("\nAttempting to take xSemaphoreOCPP loop\n");
+        if (xSemaphoreTake(xSemaphoreHTTP, portMAX_DELAY)) {
+            // printf("xSemaphoreOCPP taken for OCPP loop\n");
+            mg_mgr_poll(&mgr, 10);
+            ocpp_loop();
+            xSemaphoreGive(xSemaphoreHTTP);
+            // printf("xSemaphoreOCPP released after OCPP loop\n");
+        }
+    }
+}
+
 void app_main(void)
 {
     //Initialize NVS
@@ -40,11 +135,12 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    xSemaphoreHTTP = xSemaphoreCreateMutex();
+    
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
 
     /* Initialize Mongoose (necessary for MicroOcpp)*/
-    struct mg_mgr mgr;        // Event manager
     mg_mgr_init(&mgr);        // Initialise event manager
     mg_log_set(MG_LL_DEBUG);  // Set log level
 
@@ -55,23 +151,15 @@ void app_main(void)
             EXAMPLE_MO_OCPP_BACKEND, 
             EXAMPLE_MO_CHARGEBOXID, 
             EXAMPLE_MO_AUTHORIZATIONKEY, "", fsopt);
-    ocpp_initialize(osock, "ESP-IDF charger", "Your brand name here", fsopt, false);
+    ocpp_initialize(osock, "cc:7b:5c:27:09:70", "ESP32", fsopt, false);
 
     connect_checking_init();
     ocpp_setConnectorPluggedInput(check_ev_connected);
 
     //Create and start stats task
-    xTaskCreate( button_task, "button_task", 4096, NULL , 10, &ISR );
-
-    /* Enter infinite loop */
-    while (1) {
-        mg_mgr_poll(&mgr, 10);
-        ocpp_loop();
-    }
-    
-    /* Deallocate ressources */
-    ocpp_deinitialize();
-    ocpp_deinitConnection(osock);
-    mg_mgr_free(&mgr);
+    xTaskCreate(button_task, "button_task", 4096, NULL , 10, &ISR);
+    xTaskCreate(relay_task, "relay_task", 4096, NULL , 10, NULL);
+    xTaskCreate(http_get_loop, "http_get_loop", 4096, NULL, 10, NULL);
+    xTaskCreate(ocpp_task, "ocpp_task", 4096, NULL, 10, NULL);
     return;
 }

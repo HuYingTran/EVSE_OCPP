@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_event.h"
 #include <driver/gpio.h>
 #include "EVConnection.h"
 
@@ -8,23 +9,25 @@ bool isConnected = false;
 
 TaskHandle_t ISR = NULL;
 
+SemaphoreHandle_t xSemaphoreHTTP;
+
 // interrupt service routine, called when the button is pressed
-void IRAM_ATTR button_isr_handler(void* arg) {
+void IRAM_ATTR button_isr_handler(void* pvParameter) {
   
 xTaskResumeFromISR(ISR);
 //portYIELD_FROM_ISR(  );
 }
 
 // task that will react to button clicks
-void button_task(void *arg)
+void button_task(void *pvParameter)
 {
     bool led_status = false;
-    while(1){  
+    while(1) {   
         vTaskSuspend(NULL);
         isConnected = !isConnected;
         led_status = !led_status;
         gpio_set_level(CONFIG_LED_PIN, led_status);
-    }  
+    }
 }
 
 bool check_ev_connected() {
